@@ -31,7 +31,7 @@ def build_index(text, embedding_model):
     index.add(embeddings)
     return index, chunks
 
-def ask_question(question, index, chunks, embedding_model, tokenizer, model, top_k=2):
+def ask_question(question, index, chunks, embedding_model, tokenizer, model, top_k=3):
     q_emb = np.array(embedding_model.encode([question])).astype('float32')
     distances, indices = index.search(q_emb, top_k)
     context = ' '.join([chunks[i] for i in indices[0]])
@@ -41,21 +41,25 @@ def ask_question(question, index, chunks, embedding_model, tokenizer, model, top
         return_tensors='pt',
         truncation=True,
         max_length=512,
-        padding=True,
-        return_offsets_mapping=False
+        return_offsets_mapping=True
     )
+    offset_mapping = encoding.pop('offset_mapping')
     with torch.no_grad():
         outputs = model(**encoding)
     start = int(torch.argmax(outputs.start_logits))
     end = int(torch.argmax(outputs.end_logits))
     if end < start:
         end = start
-    all_tokens = tokenizer.convert_ids_to_tokens(encoding['input_ids'][0])
-    answer_tokens = all_tokens[start: end + 1]
-    answer = tokenizer.convert_tokens_to_string(answer_tokens).strip()
-    answer = answer.replace('<s>', '').replace('</s>', '').strip()
+    offsets = offset_mapping[0].tolist()
+    start_char = offsets[start][0]
+    end_char = offsets[end][1]
+    question_length = len(question) + 4
+    if start_char >= question_length:
+        answer = context[start_char - question_length: end_char - question_length].strip()
+    else:
+        answer = context[start_char:end_char].strip()
     if not answer or len(answer) < 2:
-        answer = 'Could not find a clear answer. Try a more specific question.'
+        answer = 'Could not find a specific answer. Try rephrasing your question.'
     confidence = round(float(torch.max(torch.softmax(outputs.start_logits, dim=1))) * 100, 1)
     return answer, confidence, context
 
