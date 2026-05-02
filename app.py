@@ -8,7 +8,7 @@ from sentence_transformers import SentenceTransformer
 
 st.set_page_config(page_title='PDF Q&A System', page_icon='📄', layout='wide')
 
-HF_API_URL = 'https://api-inference.huggingface.co/models/deepset/roberta-base-squad2'
+HF_API_URL = 'https://router.huggingface.co/hf-inference/models/deepset/roberta-base-squad2'
 
 @st.cache_resource
 def load_embedding_model():
@@ -42,7 +42,7 @@ def ask_question(question, index, chunks, embedding_model, hf_token, top_k=3):
             answer = 'Could not find a specific answer. Try rephrasing.'
         return answer, confidence, context
     else:
-        return f'API error: {response.status_code}', 0, context
+        return f'API error {response.status_code}: {response.text}', 0, context
 
 st.title('PDF Q&A System')
 st.markdown('Upload any PDF and ask questions about its contents using AI')
@@ -50,7 +50,7 @@ st.markdown('---')
 
 with st.spinner('Loading embedding model...'):
     embedding_model = load_embedding_model()
-st.success('Models ready!')
+st.success('Ready!')
 
 left, right = st.columns([1, 2])
 
@@ -65,15 +65,15 @@ with left:
         st.info(f'Characters extracted: {len(text)}')
     st.markdown('---')
     st.subheader('Hugging Face Token')
-    hf_token = st.text_input('Enter your HF token (free at huggingface.co)', type='password')
-    st.caption('Get a free token at huggingface.co/settings/tokens')
+    hf_token = st.text_input('Enter your HF token', type='password')
+    st.caption('Free token at huggingface.co/settings/tokens')
 
 with right:
     st.subheader('Ask a Question')
     if uploaded_file is None:
         st.warning('Please upload a PDF first.')
     elif not hf_token:
-        st.warning('Please enter your Hugging Face token.')
+        st.warning('Please enter your Hugging Face token in the sidebar.')
     else:
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
@@ -98,4 +98,4 @@ with right:
                 st.caption(item['context'])
             st.markdown('---')
 
-st.caption('Built with SentenceTransformers, FAISS, RoBERTa, LangChain & Streamlit')
+st.caption('Built with SentenceTransformers, FAISS, RoBERTa, HF Inference API & Streamlit')
