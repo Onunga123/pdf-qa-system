@@ -35,14 +35,28 @@ def ask_question(question, index, chunks, embedding_model, tokenizer, model, top
     q_emb = np.array(embedding_model.encode([question])).astype('float32')
     distances, indices = index.search(q_emb, top_k)
     context = ' '.join([chunks[i] for i in indices[0]])
-    inputs = tokenizer(question, context, return_tensors='pt', truncation=True, max_length=512)
+    inputs = tokenizer(
+        question,
+        context,
+        return_tensors='pt',
+        truncation=True,
+        max_length=512,
+        padding=True
+    )
     with torch.no_grad():
         outputs = model(**inputs)
-    start = torch.argmax(outputs.start_logits)
-    end = torch.argmax(outputs.end_logits) + 1
-    tokens = inputs['input_ids'][0][start:end]
-    answer = tokenizer.decode(tokens, skip_special_tokens=True)
-    confidence = round(float(torch.max(torch.softmax(outputs.start_logits, dim=1))) * 100, 1)
+    input_ids = inputs['input_ids'][0]
+    start = int(torch.argmax(outputs.start_logits))
+    end = int(torch.argmax(outputs.end_logits))
+    if end < start:
+        end = start + 5
+    end = min(end + 1, len(input_ids))
+    answer_tokens = input_ids[start:end]
+    answer = tokenizer.decode(answer_tokens, skip_special_tokens=True).strip()
+    if not answer:
+        answer = 'Could not extract a clear answer. Try rephrasing your question.'
+    start_probs = torch.softmax(outputs.start_logits, dim=1)
+    confidence = round(float(torch.max(start_probs)) * 100, 1)
     return answer, confidence
 
 st.title('PDF Q&A System')
