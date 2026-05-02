@@ -2,9 +2,6 @@ streamlit
 sentence-transformers
 faiss-cpu
 pypdf
-transformers
-torch
-langchain
-langchain-community
 langchain-text-splitters
 numpy
+requests

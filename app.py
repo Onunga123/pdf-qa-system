@@ -1,22 +1,18 @@
 import streamlit as st
 import faiss
 import numpy as np
+import requests
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-import torch
-from transformers import AutoTokenizer, AutoModelForQuestionAnswering
 
 st.set_page_config(page_title='PDF Q&A System', page_icon='📄', layout='wide')
 
+HF_API_URL = 'https://api-inference.huggingface.co/models/deepset/roberta-base-squad2'
+
 @st.cache_resource
-def load_models():
-    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    model_name = 'deepset/roberta-base-squad2'
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModelForQuestionAnswering.from_pretrained(model_name)
-    model.eval()
-    return embedding_model, tokenizer, model
+def load_embedding_model():
+    return SentenceTransformer('all-MiniLM-L6-v2')
 
 def extract_text(pdf_file):
     reader = PdfReader(pdf_file)
@@ -31,39 +27,29 @@ def build_index(text, embedding_model):
     index.add(embeddings)
     return index, chunks
 
-def ask_question(question, index, chunks, embedding_model, tokenizer, model, top_k=3):
+def ask_question(question, index, chunks, embedding_model, hf_token, top_k=3):
     q_emb = np.array(embedding_model.encode([question])).astype('float32')
     distances, indices = index.search(q_emb, top_k)
     context = ' '.join([chunks[i] for i in indices[0]])
-    inputs = tokenizer(
-        question,
-        context,
-        return_tensors='pt',
-        truncation=True,
-        max_length=512
-    )
-    input_ids = inputs['input_ids'][0]
-    with torch.no_grad():
-        outputs = model(**inputs)
-    start = int(torch.argmax(outputs.start_logits))
-    end = int(torch.argmax(outputs.end_logits))
-    if end < start:
-        end = start
-    answer_ids = input_ids[start: end + 1].tolist()
-    answer = tokenizer.decode(answer_ids, skip_special_tokens=True,
-                              clean_up_tokenization_spaces=True).strip()
-    answer = answer.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
-    if not answer or len(answer) < 2 or answer in question:
-        answer = 'Could not find a specific answer. Try rephrasing.'
-    confidence = round(float(torch.softmax(outputs.start_logits, dim=1)[0][start]) * 100, 1)
-    return answer, confidence, context
+    headers = {'Authorization': f'Bearer {hf_token}'}
+    payload = {'inputs': {'question': question, 'context': context}}
+    response = requests.post(HF_API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        result = response.json()
+        answer = result.get('answer', '').strip()
+        confidence = round(result.get('score', 0) * 100, 1)
+        if not answer or len(answer) < 2:
+            answer = 'Could not find a specific answer. Try rephrasing.'
+        return answer, confidence, context
+    else:
+        return f'API error: {response.status_code}', 0, context
 
 st.title('PDF Q&A System')
 st.markdown('Upload any PDF and ask questions about its contents using AI')
 st.markdown('---')
 
-with st.spinner('Loading AI models... may take 1-2 minutes on first load'):
-    embedding_model, tokenizer, model = load_models()
+with st.spinner('Loading embedding model...'):
+    embedding_model = load_embedding_model()
 st.success('Models ready!')
 
 left, right = st.columns([1, 2])
@@ -77,11 +63,17 @@ with left:
             index, chunks = build_index(text, embedding_model)
         st.success(f'Done! {len(chunks)} chunks indexed.')
         st.info(f'Characters extracted: {len(text)}')
+    st.markdown('---')
+    st.subheader('Hugging Face Token')
+    hf_token = st.text_input('Enter your HF token (free at huggingface.co)', type='password')
+    st.caption('Get a free token at huggingface.co/settings/tokens')
 
 with right:
     st.subheader('Ask a Question')
     if uploaded_file is None:
         st.warning('Please upload a PDF first.')
+    elif not hf_token:
+        st.warning('Please enter your Hugging Face token.')
     else:
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
@@ -89,7 +81,7 @@ with right:
         if question:
             with st.spinner('Thinking...'):
                 answer, confidence, context = ask_question(
-                    question, index, chunks, embedding_model, tokenizer, model
+                    question, index, chunks, embedding_model, hf_token
                 )
             st.session_state.chat_history.append({
                 'question': question,
