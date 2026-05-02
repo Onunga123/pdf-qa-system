@@ -40,34 +40,22 @@ def ask_question(question, index, chunks, embedding_model, tokenizer, model, top
         context,
         return_tensors='pt',
         truncation=True,
-        max_length=512,
-        return_offsets_mapping=True
+        max_length=512
     )
-    offsets = inputs.pop('offset_mapping')[0].tolist()
-    seq_ids = inputs.sequence_ids(0)
+    input_ids = inputs['input_ids'][0]
     with torch.no_grad():
         outputs = model(**inputs)
-    start_logits = outputs.start_logits[0]
-    end_logits = outputs.end_logits[0]
-    context_start = seq_ids.index(1)
-    context_end = len(seq_ids) - 1 - seq_ids[::-1].index(1)
-    start_logits[:context_start] = float('-inf')
-    start_logits[context_end + 1:] = float('-inf')
-    end_logits[:context_start] = float('-inf')
-    end_logits[context_end + 1:] = float('-inf')
-    best_start = int(torch.argmax(start_logits))
-    best_end = int(torch.argmax(end_logits))
-    if best_end < best_start:
-        best_end = best_start
-    start_char = offsets[best_start][0]
-    end_char = offsets[best_end][1]
-    context_offset = len(question) + 4
-    answer_start = max(0, start_char - context_offset)
-    answer_end = max(0, end_char - context_offset)
-    answer = context[answer_start:answer_end].strip()
-    if not answer or len(answer) < 2:
+    start = int(torch.argmax(outputs.start_logits))
+    end = int(torch.argmax(outputs.end_logits))
+    if end < start:
+        end = start
+    answer_ids = input_ids[start: end + 1].tolist()
+    answer = tokenizer.decode(answer_ids, skip_special_tokens=True,
+                              clean_up_tokenization_spaces=True).strip()
+    answer = answer.replace('<s>', '').replace('</s>', '').replace('<pad>', '').strip()
+    if not answer or len(answer) < 2 or answer in question:
         answer = 'Could not find a specific answer. Try rephrasing.'
-    confidence = round(float(torch.softmax(outputs.start_logits, dim=1)[0][best_start]) * 100, 1)
+    confidence = round(float(torch.softmax(outputs.start_logits, dim=1)[0][start]) * 100, 1)
     return answer, confidence, context
 
 st.title('PDF Q&A System')
