@@ -35,29 +35,29 @@ def ask_question(question, index, chunks, embedding_model, tokenizer, model, top
     q_emb = np.array(embedding_model.encode([question])).astype('float32')
     distances, indices = index.search(q_emb, top_k)
     context = ' '.join([chunks[i] for i in indices[0]])
-    inputs = tokenizer(
+    encoding = tokenizer(
         question,
         context,
         return_tensors='pt',
         truncation=True,
         max_length=512,
-        padding=True
+        padding=True,
+        return_offsets_mapping=False
     )
     with torch.no_grad():
-        outputs = model(**inputs)
-    input_ids = inputs['input_ids'][0]
+        outputs = model(**encoding)
     start = int(torch.argmax(outputs.start_logits))
     end = int(torch.argmax(outputs.end_logits))
     if end < start:
-        end = start + 5
-    end = min(end + 1, len(input_ids))
-    answer_tokens = input_ids[start:end]
-    answer = tokenizer.decode(answer_tokens, skip_special_tokens=True).strip()
-    if not answer:
-        answer = 'Could not extract a clear answer. Try rephrasing your question.'
-    start_probs = torch.softmax(outputs.start_logits, dim=1)
-    confidence = round(float(torch.max(start_probs)) * 100, 1)
-    return answer, confidence
+        end = start
+    all_tokens = tokenizer.convert_ids_to_tokens(encoding['input_ids'][0])
+    answer_tokens = all_tokens[start: end + 1]
+    answer = tokenizer.convert_tokens_to_string(answer_tokens).strip()
+    answer = answer.replace('<s>', '').replace('</s>', '').strip()
+    if not answer or len(answer) < 2:
+        answer = 'Could not find a clear answer. Try a more specific question.'
+    confidence = round(float(torch.max(torch.softmax(outputs.start_logits, dim=1))) * 100, 1)
+    return answer, confidence, context
 
 st.title('PDF Q&A System')
 st.markdown('Upload any PDF and ask questions about its contents using AI')
@@ -89,19 +89,22 @@ with right:
         question = st.text_input('Type your question here...', key='q')
         if question:
             with st.spinner('Thinking...'):
-                answer, confidence = ask_question(
+                answer, confidence, context = ask_question(
                     question, index, chunks, embedding_model, tokenizer, model
                 )
             st.session_state.chat_history.append({
                 'question': question,
                 'answer': answer,
-                'confidence': confidence
+                'confidence': confidence,
+                'context': context
             })
         for item in reversed(st.session_state.chat_history):
             st.markdown(f'**Q:** {item["question"]}')
             st.markdown(f'**A:** {item["answer"]}')
             color = 'green' if item['confidence'] > 50 else 'orange' if item['confidence'] > 20 else 'red'
             st.markdown(f'Confidence: :{color}[{item["confidence"]}%]')
+            with st.expander('View retrieved context'):
+                st.caption(item['context'])
             st.markdown('---')
 
 st.caption('Built with SentenceTransformers, FAISS, RoBERTa, LangChain & Streamlit')
