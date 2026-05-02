@@ -2,7 +2,7 @@ streamlit
 sentence-transformers
 faiss-cpu
 pypdf
-transformers==4.40.0
+transformers
 torch
 langchain
 langchain-community

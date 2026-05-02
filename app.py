@@ -4,15 +4,19 @@ import numpy as np
 from pypdf import PdfReader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sentence_transformers import SentenceTransformer
-from transformers import pipeline
+import torch
+from transformers import AutoTokenizer, AutoModelForQuestionAnswering
 
 st.set_page_config(page_title='PDF Q&A System', page_icon='📄', layout='wide')
 
 @st.cache_resource
 def load_models():
     embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-    llm = pipeline('question-answering', model='deepset/roberta-base-squad2')
-    return embedding_model, llm
+    model_name = 'deepset/roberta-base-squad2'
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForQuestionAnswering.from_pretrained(model_name)
+    model.eval()
+    return embedding_model, tokenizer, model
 
 def extract_text(pdf_file):
     reader = PdfReader(pdf_file)
@@ -27,19 +31,26 @@ def build_index(text, embedding_model):
     index.add(embeddings)
     return index, chunks
 
-def ask_question(question, index, chunks, embedding_model, llm, top_k=2):
+def ask_question(question, index, chunks, embedding_model, tokenizer, model, top_k=2):
     q_emb = np.array(embedding_model.encode([question])).astype('float32')
     distances, indices = index.search(q_emb, top_k)
     context = ' '.join([chunks[i] for i in indices[0]])
-    result = llm(question=question, context=context)
-    return result['answer'], round(result['score'] * 100, 1)
+    inputs = tokenizer(question, context, return_tensors='pt', truncation=True, max_length=512)
+    with torch.no_grad():
+        outputs = model(**inputs)
+    start = torch.argmax(outputs.start_logits)
+    end = torch.argmax(outputs.end_logits) + 1
+    tokens = inputs['input_ids'][0][start:end]
+    answer = tokenizer.decode(tokens, skip_special_tokens=True)
+    confidence = round(float(torch.max(torch.softmax(outputs.start_logits, dim=1))) * 100, 1)
+    return answer, confidence
 
 st.title('PDF Q&A System')
 st.markdown('Upload any PDF and ask questions about its contents using AI')
 st.markdown('---')
 
 with st.spinner('Loading AI models... may take 1-2 minutes on first load'):
-    embedding_model, llm = load_models()
+    embedding_model, tokenizer, model = load_models()
 st.success('Models ready!')
 
 left, right = st.columns([1, 2])
@@ -65,7 +76,7 @@ with right:
         if question:
             with st.spinner('Thinking...'):
                 answer, confidence = ask_question(
-                    question, index, chunks, embedding_model, llm
+                    question, index, chunks, embedding_model, tokenizer, model
                 )
             st.session_state.chat_history.append({
                 'question': question,
